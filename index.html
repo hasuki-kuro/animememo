@@ -6,6 +6,8 @@
 <title>アニメ評価ランキング</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&family=JetBrains+Mono:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
 <style>
   :root{
     --bg: #0d0f16;
@@ -97,9 +99,13 @@
     border: 1px solid var(--line);
     border-radius: 11px;
     padding: 7px 10px;
-    transition: border-color .15s ease;
+    transition: border-color .15s ease, background .15s ease;
   }
   .card:active{ border-color: var(--accent); }
+  .card.highlight{
+    background: #1f2a30;
+    border-color: var(--accent);
+  }
   .card-top{ display:flex; align-items:center; gap:9px; }
   .badge{
     flex: 0 0 auto;
@@ -113,7 +119,9 @@
     background: #23273350;
     border: 1px solid var(--line);
     color: var(--text-dim);
+    cursor: pointer;
   }
+  .badge:active{ transform: scale(0.92); }
   .badge.r1{ background: linear-gradient(160deg,#3a3115,#4b3d16); border-color: var(--gold); color: var(--gold); }
   .badge.r2{ background: linear-gradient(160deg,#2b2e36,#383c47); border-color: var(--silver); color: var(--silver); }
   .badge.r3{ background: linear-gradient(160deg,#332415,#402c17); border-color: var(--bronze); color: var(--bronze); }
@@ -217,6 +225,21 @@
   .save-btn{ background: var(--gold); color:#241a05; }
   .cancel-btn{ background: var(--panel-2); color:var(--text); border:1px solid var(--line) !important; }
   .required::after{ content:" *"; color: var(--danger); }
+  .total-input-row{ display:flex; gap:8px; }
+  .total-input-row input{ flex:1; }
+  .calc-btn{
+    flex: 0 0 auto;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--accent);
+    border-radius: 9px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .calc-btn:active{ border-color: var(--accent); }
   .menu-sheet{ padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
   .menu-item{
     display:block; width:100%; text-align:center;
@@ -279,7 +302,10 @@
     </div>
     <div class="field">
       <label class="required">合計</label>
-      <input id="f_total" placeholder="例: 95" inputmode="decimal" />
+      <div class="total-input-row">
+        <input id="f_total" placeholder="例: 95" inputmode="decimal" />
+        <button type="button" id="autoCalcBtn" class="calc-btn">自動計算</button>
+      </div>
     </div>
     <div class="field">
       <label>備考</label>
@@ -304,7 +330,7 @@
     <h2>編集用パスコード</h2>
     <div class="field">
       <label>追加・編集・削除にはパスコードが必要です</label>
-      <input id="f_passcode" type="password" placeholder="パスコードを入力" />
+      <input id="f_passcode" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="パスコードを入力" />
     </div>
     <div class="sheet-actions">
       <button class="cancel-btn" id="pcCancel">キャンセル</button>
@@ -381,38 +407,41 @@ function toast(msg){
   setTimeout(()=> toastEl.classList.remove('show'), 1600);
 }
 
-const SHARED_KEY = 'anime_entries_shared';
-const LEGACY_PERSONAL_KEY = 'anime_entries';
+const firebaseConfig = {
+  apiKey: "AIzaSyCqqGSN5Bj44bfaRLHIGakpsZkMXDUTH0Y",
+  authDomain: "animemo015.firebaseapp.com",
+  databaseURL: "https://animemo015-default-rtdb.firebaseio.com",
+  projectId: "animemo015",
+  storageBucket: "animemo015.firebasestorage.app",
+  messagingSenderId: "1088949280162",
+  appId: "1:1088949280162:web:a3b0b5c8471a1223aee6fb"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const entriesRef = db.ref('animeEntries');
 
 async function loadEntries(){
   try{
-    const res = await window.storage.get(SHARED_KEY, true);
-    if(res && res.value){
-      entries = JSON.parse(res.value);
+    const snap = await entriesRef.once('value');
+    const val = snap.val();
+    if(val){
+      entries = Array.isArray(val) ? val.filter(Boolean) : Object.values(val);
       return;
     }
-  }catch(e){ /* not found yet */ }
-
-  // 共有データがまだ無い場合、以前の個人用データがあれば引き継ぐ
-  try{
-    const legacy = await window.storage.get(LEGACY_PERSONAL_KEY, false);
-    if(legacy && legacy.value){
-      entries = JSON.parse(legacy.value);
-      await persist();
-      return;
-    }
-  }catch(e){ /* not found */ }
-
+  }catch(e){
+    console.error('firebase load failed', e);
+    toast('データの読み込みに失敗しました');
+  }
   entries = SEED.slice();
   await persist();
 }
 
 async function persist(){
   try{
-    await window.storage.set(SHARED_KEY, JSON.stringify(entries), true);
+    await entriesRef.set(entries);
   }catch(e){
-    console.error('storage save failed', e);
-    toast('保存に失敗しました');
+    console.error('firebase save failed', e);
+    toast('保存に失敗しました(通信環境を確認してください)');
   }
 }
 
@@ -478,7 +507,7 @@ function render(){
     return `
     <div class="card" data-id="${e.id}">
       <div class="card-top" data-toggle="${e.id}">
-        <div class="badge ${badgeCls}">${rank}<span class="suf">位</span></div>
+        <div class="badge ${badgeCls}" data-badge="${e.id}">${rank}<span class="suf">位</span></div>
         <div class="card-main">
           <div class="title">${escapeHtml(e.title)}</div>
           ${e.note ? `<span class="pill note">${escapeHtml(e.note)}</span>` : ''}
@@ -510,12 +539,23 @@ const menuOverlay = $('#menuOverlay');
 function closeMenu(){ menuOverlay.classList.remove('show'); menuTargetId = null; }
 
 listEl.addEventListener('click', (ev) => {
+  const badge = ev.target.closest('[data-badge]');
   const toggle = ev.target.closest('[data-toggle]');
   const menuBtn = ev.target.closest('[data-menu]');
   if(menuBtn){
     ev.stopPropagation();
     menuTargetId = menuBtn.dataset.menu;
     menuOverlay.classList.add('show');
+    return;
+  }
+  if(badge){
+    ev.stopPropagation();
+    const card = badge.closest('.card');
+    if(card.classList.contains('open')){
+      card.classList.toggle('highlight');
+    } else {
+      card.classList.add('open');
+    }
     return;
   }
   if(toggle){
@@ -589,6 +629,17 @@ async function removeEntry(id){
   render();
   toast('削除しました');
 }
+
+$('#autoCalcBtn').addEventListener('click', () => {
+  const keys = ['f_char','f_scenario','f_art','f_tempo','f_other'];
+  let sum = 0;
+  for(const k of keys){
+    const n = parseNum($('#'+k).value);
+    if(n !== null) sum += n;
+  }
+  $('#f_total').value = sum;
+  toast('自動計算しました(必要なら調整してください)');
+});
 
 $('#saveBtn').addEventListener('click', async () => {
   const title = $('#f_title').value.trim();
